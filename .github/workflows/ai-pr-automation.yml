@@ -1,8 +1,10 @@
 name: AI PR Automation
- 
+
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
+  workflow_call:
+    secrets:
+      GROQ_API_KEY:
+        required: true
 
 permissions:
   contents: read
@@ -27,5 +29,5 @@ jobs:
       - name: Run AI PR Automation
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python run_action.py

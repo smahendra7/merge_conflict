@@ -15,8 +15,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # Checkout the target repository
+      - name: Checkout target repository
         uses: actions/checkout@v4
+
+      # Checkout the Automation Repository
+      - name: Checkout automation repository
+        uses: actions/checkout@v4
+        with:
+          repository: smahendra7/boAt_GithubAction
+          ref: main
+          path: automation
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,10 +33,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r automation/requirements.txt
 
       - name: Run AI PR Automation
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: python run_action.py
+        run: python automation/run_action.py

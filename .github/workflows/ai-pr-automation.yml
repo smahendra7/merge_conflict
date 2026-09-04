@@ -5,8 +5,6 @@ on:
     secrets:
       GROQ_API_KEY:
         required: true
-      AUTOMATION_REPO_TOKEN:
-        required: true
 
 permissions:
   contents: read
@@ -30,4 +28,3 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          AUTOMATION_REPO_TOKEN: ${{ secrets.AUTOMATION_REPO_TOKEN }}

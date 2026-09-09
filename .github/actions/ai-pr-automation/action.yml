@@ -11,3 +11,9 @@ runs:
     - name: Run AI PR Automation
       shell: bash
       run: python "${{ github.action_path }}/../../../run_action.py"
+
+    - name: Copy Word reports to workspace
+      shell: bash
+      run: |
+        mkdir -p "${GITHUB_WORKSPACE}/reports/files"
+        cp "${{ github.action_path }}/../../../reports/files/"*.docx "${GITHUB_WORKSPACE}/reports/files/"

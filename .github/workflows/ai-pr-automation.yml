@@ -29,6 +29,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
 
+      # Keep this if you still want the normal Actions artifact
       - name: Upload AI Review Report
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,6 +38,7 @@ jobs:
           path: reports/files/*.docx
           if-no-files-found: ignore
 
+      # Create a GitHub Release containing the actual .docx
       - name: Publish Word Report
         if: success()
         shell: bash
@@ -45,9 +47,9 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "========================================"
+          set -e
+
           echo "Finding Word report..."
-          echo "========================================"
 
           REPORT=$(find reports/files -type f -name "*.docx" | head -n 1)
 
@@ -63,9 +65,7 @@ jobs:
           echo "Filename: $FILENAME"
           echo "Release tag: $TAG"
 
-          echo "========================================"
           echo "Creating GitHub Release..."
-          echo "========================================"
 
           gh release create "$TAG" \
             "$REPORT" \
@@ -74,9 +74,7 @@ jobs:
             --notes "AI PR Review Word report for PR #${PR_NUMBER}." \
             --latest=false
 
-          echo "========================================"
-          echo "Getting direct Word report download URL..."
-          echo "========================================"
+          echo "Getting direct .docx download URL..."
 
           DOWNLOAD_URL=$(gh release view "$TAG" \
             --repo "$REPO" \
@@ -88,12 +86,10 @@ jobs:
             exit 1
           fi
 
-          echo "Direct download URL:"
+          echo "Download URL:"
           echo "$DOWNLOAD_URL"
 
-          echo "========================================"
           echo "Posting PR comment..."
-          echo "========================================"
 
           gh pr comment "$PR_NUMBER" \
             --repo "$REPO" \
@@ -101,6 +97,4 @@ jobs:
 
           [⬇️ Download Word Report]($DOWNLOAD_URL)"
 
-          echo "========================================"
           echo "Word report published successfully."
-          echo "========================================"

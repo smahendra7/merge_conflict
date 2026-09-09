@@ -742,26 +742,51 @@ def process_pr_event(
                 )
                 report_filename = os.path.basename(report_file_path)
 
-                base_url = os.environ.get("BASE_URL", "").rstrip("/")
+                # GitHub Actions: build a link to the workflow run page where
+                # the uploaded artifact (AI-PR-Review-Report) will appear.
+                github_run_id = os.environ.get("GITHUB_RUN_ID", "")
+                github_repository = os.environ.get("GITHUB_REPOSITORY", "")
+                github_server_url = os.environ.get(
+                    "GITHUB_SERVER_URL", "https://github.com"
+                ).rstrip("/")
 
-                if base_url:
+                if github_run_id and github_repository:
                     download_url = (
-                        f"{base_url}/reports/download/{report_filename}"
+                        f"{github_server_url}/{github_repository}"
+                        f"/actions/runs/{github_run_id}"
                     )
                     review = (
                         f"{review}\n\n"
                         "---\n"
-                        f"\U0001f4c4 [Download Word Report]({download_url})"
+                        "### \U0001f4c4 AI Review Report\n\n"
+                        f"[\u2b07\ufe0f Download Word Report]({download_url})\n\n"
+                        "> Open the link above, scroll to the **Artifacts** "
+                        "section, and download **AI-PR-Review-Report**."
                     )
                     print(
-                        f"[REPORT] Download link appended to review comment: "
-                        f"{download_url}"
+                        f"[REPORT] GitHub Actions artifact link appended to "
+                        f"review comment: {download_url}"
                     )
                 else:
-                    print(
-                        "[REPORT] BASE_URL not set — download link will not "
-                        "be included in the PR comment."
-                    )
+                    base_url = os.environ.get("BASE_URL", "").rstrip("/")
+                    if base_url:
+                        download_url = (
+                            f"{base_url}/reports/download/{report_filename}"
+                        )
+                        review = (
+                            f"{review}\n\n"
+                            "---\n"
+                            f"\U0001f4c4 [Download Word Report]({download_url})"
+                        )
+                        print(
+                            f"[REPORT] Download link appended to review comment: "
+                            f"{download_url}"
+                        )
+                    else:
+                        print(
+                            "[REPORT] Neither GITHUB_RUN_ID nor BASE_URL is set "
+                            "— download link will not be included in the PR comment."
+                        )
 
             except Exception as report_err:
                 print(

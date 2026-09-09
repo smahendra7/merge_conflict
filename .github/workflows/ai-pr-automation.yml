@@ -29,6 +29,29 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Find generated Word reports
+        if: always()
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "Current directory:"
+          pwd
+          echo "========================================"
+
+          echo ""
+          echo "All DOCX files:"
+          find . -type f -name "*.docx" -print
+
+          echo ""
+          echo "All reports directories:"
+          find . -type d -name "reports" -print
+
+          echo ""
+          echo "All files under reports:"
+          find . -type f -path "*/reports/*" -print
+
+          echo "========================================"
+
       - name: Upload AI Review Report
         if: always()
         uses: actions/upload-artifact@v4

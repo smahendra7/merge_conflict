@@ -7,7 +7,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -29,29 +29,6 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Find generated Word reports
-        if: always()
-        shell: bash
-        run: |
-          echo "========================================"
-          echo "Current directory:"
-          pwd
-          echo "========================================"
-
-          echo ""
-          echo "All DOCX files:"
-          find . -type f -name "*.docx" -print
-
-          echo ""
-          echo "All reports directories:"
-          find . -type d -name "reports" -print
-
-          echo ""
-          echo "All files under reports:"
-          find . -type f -path "*/reports/*" -print
-
-          echo "========================================"
-
       - name: Upload AI Review Report
         if: always()
         uses: actions/upload-artifact@v4
@@ -59,3 +36,71 @@ jobs:
           name: AI-PR-Review-Report
           path: reports/files/*.docx
           if-no-files-found: ignore
+
+      - name: Publish Word Report
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "========================================"
+          echo "Finding Word report..."
+          echo "========================================"
+
+          REPORT=$(find reports/files -type f -name "*.docx" | head -n 1)
+
+          if [ -z "$REPORT" ]; then
+            echo "ERROR: No Word report found."
+            exit 1
+          fi
+
+          FILENAME=$(basename "$REPORT")
+          TAG="ai-pr-report-pr-${PR_NUMBER}-${GITHUB_RUN_ID}"
+
+          echo "Report: $REPORT"
+          echo "Filename: $FILENAME"
+          echo "Release tag: $TAG"
+
+          echo "========================================"
+          echo "Creating GitHub Release..."
+          echo "========================================"
+
+          gh release create "$TAG" \
+            "$REPORT" \
+            --repo "$REPO" \
+            --title "AI PR Review Report - PR #${PR_NUMBER}" \
+            --notes "AI PR Review Word report for PR #${PR_NUMBER}." \
+            --latest=false
+
+          echo "========================================"
+          echo "Getting direct Word report download URL..."
+          echo "========================================"
+
+          DOWNLOAD_URL=$(gh release view "$TAG" \
+            --repo "$REPO" \
+            --json assets \
+            --jq '.assets[] | select(.name == "'"$FILENAME"'") | .browser_download_url')
+
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "ERROR: Could not find browser download URL."
+            exit 1
+          fi
+
+          echo "Direct download URL:"
+          echo "$DOWNLOAD_URL"
+
+          echo "========================================"
+          echo "Posting PR comment..."
+          echo "========================================"
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$REPO" \
+            --body "### 📄 AI Review Report
+
+          [⬇️ Download Word Report]($DOWNLOAD_URL)"
+
+          echo "========================================"
+          echo "Word report published successfully."
+          echo "========================================"

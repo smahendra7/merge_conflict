@@ -207,8 +207,32 @@ class TestBuildCombinedComment:
         assert "**Line:** L2-L3" in combined
         assert "**Code:**\n```python" in combined
         assert "Reason: not bold" in combined  # untouched inside code block
-        assert "**Reason:**\nContradicts actual behavior" in combined
+        assert "**Reason:** Contradicts actual behavior" in combined
         assert "**Suggestion:**\nAlign the comment with actual behavior" in combined
+
+    def test_multiple_ai_code_review_issues_separated_by_horizontal_rule(self):
+        raw_review = (
+            "Issue:\nFirst issue\n\n"
+            "File: comment_test.py\n"
+            "Line: L2-L3\n\n"
+            "Code:\n```python\nx = 1\n```\n\n"
+            "Reason:\nFirst reason\n\n"
+            "Suggestion:\nFirst suggestion\n\n"
+            "Issue:\nSecond issue\n\n"
+            "File: comment_test.py\n"
+            "Line: L7-L8\n\n"
+            "Code:\n```python\ny = 2\n```\n\n"
+            "Reason:\nSecond reason\n\n"
+            "Suggestion:\nSecond suggestion"
+        )
+        combined = _build_combined_comment("## PR Validation\n\u2705 OK", raw_review)
+        assert "**Reason:** First reason" in combined
+        assert "**Reason:** Second reason" in combined
+        # Check that there is a separator between the first and second issue
+        review_part = combined.split("## AI Code Review\n\n")[1]
+        assert "\n\n---\n\n" in review_part
+        assert review_part.count("---") == 1
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

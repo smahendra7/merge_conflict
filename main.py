@@ -182,6 +182,34 @@ def _bold_labels(text: str) -> str:
     return "".join(parts)
 
 
+def _format_review(review_text: str) -> str:
+    """
+    Format the raw AI Code Review text for the final PR comment:
+    1. Bold all labels (**Issue:**, **File:**, **Line:**, **Code:**, **Reason:**, **Suggestion:**).
+    2. Make **Reason:** inline with its text (same line) — outside code blocks only.
+    3. Insert '---' separators between individual **Issue:** blocks.
+    """
+    if not review_text:
+        return ""
+
+    bolded = _bold_labels(review_text)
+
+    # ── Step 1: make **Reason:** inline (outside fenced code blocks) ──────────
+    parts = re.split(r"(```[\s\S]*?```)", bolded)
+    reason_inline = re.compile(r"(?m)^(\s*)\*\*Reason:\*\*[ \t]*\n+([^\n\s])")
+    for i in range(0, len(parts), 2):
+        parts[i] = reason_inline.sub(r"\1**Reason:** \2", parts[i])
+    text = "".join(parts)
+
+    # ── Step 2: insert --- between **Issue:** blocks ──────────────────────────
+    issue_pattern = re.compile(r"(?m)(?=^\*\*Issue:\*\*)")
+    blocks = [b.strip() for b in issue_pattern.split(text) if b.strip()]
+    if len(blocks) > 1:
+        text = "\n\n---\n\n".join(blocks)
+
+    return text.strip()
+
+
 def _build_combined_comment(
     validation_section: str,
     review_text: str,
@@ -190,7 +218,7 @@ def _build_combined_comment(
     Combine the PR Validation section and the AI Code Review section
     into one final PR comment body.
     """
-    formatted_review = _bold_labels(review_text) if review_text else ""
+    formatted_review = _format_review(review_text) if review_text else ""
     parts = [
         validation_section,
         "",
@@ -200,7 +228,8 @@ def _build_combined_comment(
         "",
         formatted_review,
     ]
-    return _bold_labels("\n".join(parts))
+    return "\n".join(parts)
+
 
 
 def process_pr_event(

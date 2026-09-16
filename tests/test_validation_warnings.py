@@ -171,6 +171,45 @@ class TestBuildCombinedComment:
         combined = _build_combined_comment("## PR Validation\n\u2705 OK", "AI review here.")
         assert combined.index("## PR Validation") < combined.index("## AI Code Review")
 
+    def test_bold_labels_in_validation_section(self):
+        mismatch = {
+            "file": "comment_test.py",
+            "line": "2",
+            "comment": "adds discount",
+            "code": "return price - discount",
+            "reason": "contradicts code",
+            "suggestion": "subtracts discount",
+        }
+        section = _build_validation_section(
+            "PR Description needs improvement",
+            "PR description is empty",
+            "Suggested desc",
+            [mismatch],
+        )
+        assert "**Reason:**\nPR description is empty" in section
+        assert "**File:** `comment_test.py`" in section
+        assert "**Line:** 2" in section
+        assert "**Comment:**\n> adds discount" in section
+        assert "**Reason:**\ncontradicts code" in section
+
+    def test_bold_labels_in_ai_code_review(self):
+        raw_review = (
+            "Issue:\nThe comment for calculate_discount\n\n"
+            "File: comment_test.py\n"
+            "Line: L2-L3\n\n"
+            "Code:\n```python\nReason: not bold\n```\n\n"
+            "Reason:\nContradicts actual behavior\n\n"
+            "Suggestion:\nAlign the comment with actual behavior"
+        )
+        combined = _build_combined_comment("## PR Validation\n\u2705 OK", raw_review)
+        assert "**Issue:**\nThe comment for calculate_discount" in combined
+        assert "**File:** comment_test.py" in combined
+        assert "**Line:** L2-L3" in combined
+        assert "**Code:**\n```python" in combined
+        assert "Reason: not bold" in combined  # untouched inside code block
+        assert "**Reason:**\nContradicts actual behavior" in combined
+        assert "**Suggestion:**\nAlign the comment with actual behavior" in combined
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # run_action exit behavior

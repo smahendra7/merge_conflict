@@ -2,6 +2,7 @@ import json
 import hmac
 import hashlib
 import os
+import re
 import shutil
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -133,7 +134,7 @@ def _build_validation_section(
     if desc_warning:
         desc_lines = ["### \u26a0\ufe0f PR Description needs improvement\n"]
         if desc_reason:
-            desc_lines.append(f"Reason:\n{desc_reason}\n")
+            desc_lines.append(f"**Reason:**\n{desc_reason}\n")
         if desc_suggestion:
             desc_lines.append(f"\U0001f4a1 **Suggested PR Description:**\n\n> {desc_suggestion}")
         blocks.append("\n".join(desc_lines).strip())
@@ -143,9 +144,9 @@ def _build_validation_section(
         for item in comment_warnings:
             comment_lines = [
                 "### \u26a0\ufe0f Code Comment needs improvement\n",
-                f"File: `{item['file']}`\nLine: {item['line']}\n",
-                f"Comment:\n> {item['comment']}\n",
-                f"Reason:\n{item['reason']}",
+                f"**File:** `{item['file']}`\n**Line:** {item['line']}\n",
+                f"**Comment:**\n> {item['comment']}\n",
+                f"**Reason:**\n{item['reason']}",
             ]
             suggestion = item.get("suggestion", "")
             if suggestion:
@@ -158,6 +159,29 @@ def _build_validation_section(
     return f"## PR Validation\n\n{joined_blocks}"
 
 
+def _bold_labels(text: str) -> str:
+    """
+    Make target labels bold wherever they appear in the text (outside code blocks):
+    - **Reason:**
+    - **File:**
+    - **Line:**
+    - **Comment:**
+    - **Issue:**
+    - **Code:**
+    - **Suggestion:**
+    """
+    if not text:
+        return ""
+    # Split by fenced code blocks so code lines inside ```...``` are never altered
+    parts = re.split(r"(```[\s\S]*?```)", text)
+    pattern = re.compile(
+        r"(?m)^(\s*(?:💡\s*|\*\s*)?)(?!\*\*)(Issue|File|Line|Comment|Code|Reason|Suggestion):"
+    )
+    for i in range(0, len(parts), 2):
+        parts[i] = pattern.sub(r"\1**\2:**", parts[i])
+    return "".join(parts)
+
+
 def _build_combined_comment(
     validation_section: str,
     review_text: str,
@@ -166,6 +190,7 @@ def _build_combined_comment(
     Combine the PR Validation section and the AI Code Review section
     into one final PR comment body.
     """
+    formatted_review = _bold_labels(review_text) if review_text else ""
     parts = [
         validation_section,
         "",
@@ -173,9 +198,9 @@ def _build_combined_comment(
         "",
         "## AI Code Review",
         "",
-        review_text,
+        formatted_review,
     ]
-    return "\n".join(parts)
+    return _bold_labels("\n".join(parts))
 
 
 def process_pr_event(

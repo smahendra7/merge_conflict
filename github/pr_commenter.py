@@ -30,8 +30,7 @@ def post_pr_comment(
     }
 
     body = {
-        "body":
-        f"## AI Code Review\n\n{review}"
+        "body": review
     }
 
     response = requests.post(

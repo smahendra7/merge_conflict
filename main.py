@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, Response, JSONResponse
+from fastapi.responses import Response, JSONResponse
 
 from github.repository_manager import clone_repository
 from github.diff_extractor import (
@@ -34,17 +34,11 @@ from github.reviewer_manager import (
 from ai.prompt_builder import build_review_prompt
 from ai.reviewer import review_code
 from ai.description_validator import validate_pr_description
-from ai.comment_validator import (
-    validate_code_comments,
-    format_comment_validation_failure
-)
-from ai.severity_classifier import classify_and_group_review
+from ai.comment_validator import validate_code_comments
 from ai.description_code_match_validator import validate_description_matches_code
-
-from reports.report_generator import (
-    generate_word_report,
-    generate_mismatch_report,
-    get_report_bytes
+from ai.suggestion_generator import (
+    generate_description_suggestion,
+    generate_comment_suggestion,
 )
 
 app = FastAPI()
@@ -102,11 +96,6 @@ def verify_signature(
         return False
 
 
-REPORTS_DIR = os.path.join(
-    os.path.dirname(__file__),
-    "reports",
-    "files"
-)
 
 
 @app.get("/")
@@ -117,33 +106,77 @@ def home():
     }
 
 
-@app.get("/reports/download/{filename}")
-def download_report(filename: str):
+def _build_validation_section(
+    desc_warning: str | None,
+    desc_reason: str | None,
+    desc_suggestion: str | None,
+    comment_warnings: list,
+) -> str:
     """
-    Serve a generated Word (.docx) review report by filename.
-    Checks disk, memory cache, or regenerates from GitHub on demand.
+    Build the ## PR Validation section of the combined PR comment.
+
+    desc_warning      - set if description validation produced a warning
+    desc_reason       - human-readable reason text
+    desc_suggestion   - AI-generated improved description
+    comment_warnings  - list of dicts: {file, line, comment, code, reason, suggestion}
+
+    Returns the full markdown section string.
     """
-    data = get_report_bytes(filename, REPORTS_DIR)
+    lines = ["## PR Validation"]
 
-    if not data:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": "error",
-                "message": f"Report '{filename}' not found."
-            }
-        )
+    has_warnings = bool(desc_warning) or bool(comment_warnings)
 
-    return Response(
-        content=data,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument"
-            ".wordprocessingml.document"
-        ),
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
-    )
+    if not has_warnings:
+        lines.append("\n\u2705 No validation issues found.")
+        return "\n".join(lines)
+
+    # ── PR Description Validation ──────────────────────────────────────────
+    if desc_warning:
+        lines.append("\n### \u26a0\ufe0f PR Description needs improvement")
+        if desc_reason:
+            lines.append(f"\n{desc_reason}")
+        if desc_suggestion:
+            lines.append("\n\U0001f4a1 **Suggested PR Description:**")
+            lines.append(f"\n> {desc_suggestion}")
+
+    # ── Code Comment Accuracy ──────────────────────────────────────────────
+    if comment_warnings:
+        for item in comment_warnings:
+            lines.append("\n### \u26a0\ufe0f Code Comment needs improvement")
+            lines.append(
+                f"\n**File:** `{item['file']}`  \n"
+                f"**Line:** {item['line']}  \n"
+                f"**Comment:** \"{item['comment']}\"  \n"
+                f"**Reason:** {item['reason']}"
+            )
+            suggestion = item.get("suggestion", "")
+            if suggestion:
+                lines.append("\n\U0001f4a1 **Suggested Corrected Comment:**")
+                lines.append(f"\n> {suggestion}")
+
+    return "\n".join(lines)
+
+
+def _build_combined_comment(
+    validation_section: str,
+    review_text: str,
+) -> str:
+    """
+    Combine the PR Validation section and the AI Code Review section
+    into one final PR comment body.
+    """
+    parts = [
+        "\U0001f916 **AI PR Review**",
+        "",
+        validation_section,
+        "",
+        "---",
+        "",
+        "## AI Code Review",
+        "",
+        review_text,
+    ]
+    return "\n".join(parts)
 
 
 def process_pr_event(
@@ -268,57 +301,38 @@ def process_pr_event(
                         f"[WARNING] Could not capture original reviewers: {e}"
                     )
 
-            print("\nExecuting PR Description Validation Gate...")
-            is_valid, validation_reason = validate_pr_description(
-                pr_title,
-                pr_body
-            )
+            # ============================================================
+            # PR VALIDATION — collects ALL warnings, never stops the pipeline
+            # ============================================================
 
-            if not is_valid:
-                print(
-                    "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
-                print(
-                    f"PR DESCRIPTION VALIDATION GATE >>> FAILED <<<"
-                )
-                print(
-                    f"Reason: {validation_reason}"
-                )
-                print(
-                    "Pipeline STOPPED. Code review will NOT run."
-                )
-                print(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            # Warning state accumulators
+            desc_warning: str | None = None      # set if description has a problem
+            desc_reason: str | None = None       # human-readable reason
+            desc_suggestion: str | None = None   # AI-generated improved description
+            comment_warnings: list = []          # per-comment warning dicts
+
+            # ── Step 1: PR Description text-quality validation ────────────
+            print("\nExecuting PR Description Validation...")
+            try:
+                is_valid, validation_reason = validate_pr_description(
+                    pr_title,
+                    pr_body
                 )
 
-                try:
-                    post_pr_comment(
-                        repo_name,
-                        pr_number,
-                        f"\u274c **PR Description Validation Failed**\n\n**Reason:** {validation_reason}\n\nPlease update your PR description with a clear explanation of what this PR does, then push a new commit to re-trigger the review."
-                    )
+                if not is_valid:
                     print(
-                        "Validation Failure Comment Posted To GitHub Successfully"
+                        f"[VALIDATION WARNING] PR Description quality: {validation_reason}"
                     )
-                except Exception as e:
-                    print(
-                        f"[WARNING] Could not post GitHub comment: {e}"
-                    )
-                    print(
-                        "[WARNING] Check that GITHUB_TOKEN has write permissions."
-                    )
+                    desc_warning = "PR Description needs improvement"
+                    desc_reason = validation_reason
+                else:
+                    print("[VALIDATION] PR Description quality: PASS")
 
-                if action in REVIEWER_MANAGEMENT_ACTIONS:
-                    handle_reviewers_for_validation_result(
-                        repo_name,
-                        pr_number,
-                        validation_passed=False
-                    )
-
-                return {
-                    "status": "failed",
-                    "reason": validation_reason
-                }
+            except Exception as e:
+                print(
+                    f"[WARNING] PR Description validation error: {e}. "
+                    "Continuing (fail-open)."
+                )
 
             workspace_path = (
                 f"workspace/pr_{pr_number}"
@@ -433,7 +447,7 @@ def process_pr_event(
                     post_pr_comment(
                         repo_name,
                         pr_number,
-                        "ℹ️ **AI Code Review Skipped**\n\n"
+                        "\u2139\ufe0f **AI Code Review Skipped**\n\n"
                         "No application files were modified in this PR (only automation/workflow files changed)."
                     )
                     print(
@@ -467,185 +481,117 @@ def process_pr_event(
                     "message": "no_application_files_to_review"
                 }
 
-            print("\nExecuting Code Comment Validation Gate...")
+            # ── Step 2: PR Description vs Code Match (same validation section) ──
+            print("\nExecuting PR Description vs Code Match Validation...")
+            try:
+                desc_match_valid, desc_match_reason = validate_description_matches_code(
+                    pr_title,
+                    pr_body,
+                    diff
+                )
+
+                if not desc_match_valid:
+                    print(
+                        f"[VALIDATION WARNING] Description vs Code: {desc_match_reason}"
+                    )
+                    # Merge into the unified PR Description Validation warning.
+                    desc_warning = "PR Description needs improvement"
+                    if desc_reason:
+                        desc_reason = (
+                            f"{desc_reason} Additionally, {desc_match_reason.lower()}"
+                        )
+                    else:
+                        desc_reason = desc_match_reason
+                else:
+                    print("[VALIDATION] Description vs Code: PASS")
+
+            except Exception as e:
+                print(
+                    f"[WARNING] Description-vs-code validation error: {e}. "
+                    "Continuing (fail-open)."
+                )
+
+            # ── Step 3: Generate AI description suggestion (if needed) ────
+            if desc_warning:
+                print("\nGenerating AI description suggestion...")
+                try:
+                    desc_suggestion = generate_description_suggestion(
+                        pr_title,
+                        pr_body,
+                        diff
+                    )
+                except Exception as e:
+                    print(
+                        f"[WARNING] Could not generate description suggestion: {e}."
+                    )
+                    desc_suggestion = (
+                        "Please update the PR description to clearly explain "
+                        "the purpose and main changes of this PR."
+                    )
+
+            # ── Step 4: Code Comment Accuracy Validation ──────────────────
+            print("\nExecuting Code Comment Accuracy Validation...")
             comment_ref = (
                 after_sha
                 if action == "synchronize" and after_sha
                 else None
             )
-            comment_mismatches = validate_code_comments(
-                workspace_path,
-                changed_files,
-                source_branch,
-                comment_ref
-            )
+            try:
+                raw_mismatches = validate_code_comments(
+                    workspace_path,
+                    changed_files,
+                    source_branch,
+                    comment_ref
+                )
+            except Exception as e:
+                print(
+                    f"[WARNING] Comment validation error: {e}. "
+                    "Continuing (fail-open)."
+                )
+                raw_mismatches = []
 
-            if comment_mismatches:
+            # ── Step 5: Generate AI suggestion for every comment mismatch ─
+            if raw_mismatches:
                 print(
-                    "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    f"\n[VALIDATION WARNING] {len(raw_mismatches)} code comment "
+                    "mismatch(es) found. Generating AI suggestions..."
                 )
-                print(
-                    "CODE COMMENT VALIDATION GATE >>> FAILED <<<"
-                )
-                print(
-                    f"Mismatches Found: {len(comment_mismatches)}"
-                )
-                print(
-                    "Pipeline STOPPED. Code review will NOT run."
-                )
-                print(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
-
-                try:
-                    failure_message = format_comment_validation_failure(
-                        comment_mismatches
-                    )
-
-                    # ---- Word Report Generation (additive) ---------------
-                    # Generate a .docx report from the mismatches and append
-                    # a download link to the failure message when BASE_URL is
-                    # set. If anything fails the original message is used.
+                for mismatch in raw_mismatches:
                     try:
-                        report_file_path = generate_mismatch_report(
-                            repo_name,
-                            pr_number,
-                            comment_mismatches,
-                            REPORTS_DIR
+                        suggestion = generate_comment_suggestion(
+                            file=mismatch.get("file", ""),
+                            line=mismatch.get("line", ""),
+                            comment=mismatch.get("comment", ""),
+                            code=mismatch.get("code", ""),
+                            reason=mismatch.get("reason", ""),
                         )
-                        report_filename = os.path.basename(
-                            report_file_path
-                        )
-                        base_url = (
-                            os.environ.get("BASE_URL", "").rstrip("/")
-                        )
-                        if base_url:
-                            download_url = (
-                                f"{base_url}/reports/download/"
-                                f"{report_filename}"
-                            )
-                            failure_message = (
-                                f"{failure_message}\n\n"
-                                "---\n"
-                                f"\U0001f4c4 [Download Word Report]"
-                                f"({download_url})"
-                            )
-                            print(
-                                "[REPORT] Download link appended to "
-                                "comment validation failure comment: "
-                                f"{download_url}"
-                            )
-                        else:
-                            print(
-                                "[REPORT] BASE_URL not set — download "
-                                "link will not be included in the comment."
-                            )
-                    except Exception as report_err:
+                    except Exception as e:
                         print(
-                            f"[REPORT] Warning: Could not generate Word "
-                            f"report: {report_err}. Continuing without report."
+                            f"[WARNING] Could not generate comment suggestion: {e}."
                         )
-                    # ---- End Word Report Generation ----------------------
-
-                    post_pr_comment(
-                        repo_name,
-                        pr_number,
-                        failure_message
-                    )
-                    print(
-                        "Comment Validation Failure Comment Posted Successfully"
-                    )
-                except Exception as e:
-                    print(
-                        f"[WARNING] Could not post GitHub comment: {e}"
-                    )
-
-                if action in REVIEWER_MANAGEMENT_ACTIONS:
-                    handle_reviewers_for_validation_result(
-                        repo_name,
-                        pr_number,
-                        validation_passed=False
-                    )
-
-                try:
-                    if os.path.exists(workspace_path):
-                        shutil.rmtree(workspace_path)
-                        print(
-                            f"Workspace cleaned up: {workspace_path}"
+                        suggestion = (
+                            "Update the comment to accurately describe what the code does."
                         )
-                except Exception as cleanup_err:
-                    print(
-                        f"Workspace Cleanup Warning: {cleanup_err}"
-                    )
+                    comment_warnings.append({**mismatch, "suggestion": suggestion})
+            else:
+                print("[VALIDATION] Code Comment Accuracy: PASS")
 
-                return {
-                    "status": "failed",
-                    "reason": "comment_validation_failed"
-                }
+            # ── Validation summary ────────────────────────────────────────
+            print("\n===== PR VALIDATION SUMMARY =====")
+            if desc_warning:
+                print(f"  \u26a0\ufe0f  PR Description: {desc_reason}")
+            else:
+                print("  \u2705 PR Description: OK")
+            if comment_warnings:
+                print(f"  \u26a0\ufe0f  Code Comments: {len(comment_warnings)} issue(s)")
+            else:
+                print("  \u2705 Code Comments: OK")
+            print("  \u2192 Proceeding to AI Code Review regardless of warnings.")
+            print("=================================\n")
 
-            print("\nExecuting PR Description-vs-Code Match Validation Gate...")
-            desc_match_valid, desc_match_reason = validate_description_matches_code(
-                pr_title,
-                pr_body,
-                diff
-            )
-
-            if not desc_match_valid:
-                print(
-                    "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
-                print(
-                    "PR DESCRIPTION DOES NOT MATCH CODE CHANGES >>> FAILED <<<"
-                )
-                print(
-                    f"Reason: {desc_match_reason}"
-                )
-                print(
-                    "Pipeline STOPPED. Code review will NOT run."
-                )
-                print(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
-
-                try:
-                    post_pr_comment(
-                        repo_name,
-                        pr_number,
-                        f"\u274c **PR Description Does Not Match Code Changes**\n\n"
-                        f"**Reason:** {desc_match_reason}\n\n"
-                        "Please update your PR description so it accurately reflects "
-                        "the code changes, then push a new commit to re-trigger the review."
-                    )
-                    print(
-                        "Description-vs-Code Mismatch Failure Comment Posted To GitHub Successfully"
-                    )
-                except Exception as e:
-                    print(
-                        f"[WARNING] Could not post GitHub comment: {e}"
-                    )
-
-                if action in REVIEWER_MANAGEMENT_ACTIONS:
-                    handle_reviewers_for_validation_result(
-                        repo_name,
-                        pr_number,
-                        validation_passed=False
-                    )
-
-                try:
-                    if os.path.exists(workspace_path):
-                        shutil.rmtree(workspace_path)
-                        print(
-                            f"Workspace cleaned up: {workspace_path}"
-                        )
-                except Exception as cleanup_err:
-                    print(
-                        f"Workspace Cleanup Warning: {cleanup_err}"
-                    )
-
-                return {
-                    "status": "failed",
-                    "reason": desc_match_reason
-                }
+            # ============================================================
+            # AI CODE REVIEW — always runs after all validations complete
+            # ============================================================
 
             print(
                 "Starting Local AI LLM Processing Engine..."
@@ -723,80 +669,22 @@ def process_pr_event(
             review = review_code(
                 prompt
             )
-            review = classify_and_group_review(
-                review,
-                workspace_path,
-                diff
+
+            # ── Build and post one combined PR comment ────────────────────
+            validation_section = _build_validation_section(
+                desc_warning=desc_warning,
+                desc_reason=desc_reason,
+                desc_suggestion=desc_suggestion,
+                comment_warnings=comment_warnings,
             )
 
-            # ---- Word Report Generation (additive) ----------------------
-            # Generate a downloadable .docx report from the review results.
-            # If report generation fails for any reason, the original review
-            # string is used unchanged and the PR comment is still posted.
-            try:
-                report_file_path = generate_word_report(
-                    repo_name,
-                    pr_number,
-                    review,
-                    REPORTS_DIR
-                )
-                report_filename = os.path.basename(report_file_path)
-
-                # GitHub Actions: build a link to the workflow run page where
-                # the uploaded artifact (AI-PR-Review-Report) will appear.
-                github_run_id = os.environ.get("GITHUB_RUN_ID", "")
-                github_repository = os.environ.get("GITHUB_REPOSITORY", "")
-                github_server_url = os.environ.get(
-                    "GITHUB_SERVER_URL", "https://github.com"
-                ).rstrip("/")
-
-                if github_run_id and github_repository:
-                    download_url = (
-                        f"{github_server_url}/{github_repository}"
-                        f"/actions/runs/{github_run_id}"
-                    )
-                    review = (
-                        f"{review}\n\n"
-                        "---\n"
-                        "### \U0001f4c4 AI Review Report\n\n"
-                        f"[\u2b07\ufe0f Download Word Report]({download_url})\n\n"
-                        "> Open the link above, scroll to the **Artifacts** "
-                        "section, and download **AI-PR-Review-Report**."
-                    )
-                    print(
-                        f"[REPORT] GitHub Actions artifact link appended to "
-                        f"review comment: {download_url}"
-                    )
-                else:
-                    base_url = os.environ.get("BASE_URL", "").rstrip("/")
-                    if base_url:
-                        download_url = (
-                            f"{base_url}/reports/download/{report_filename}"
-                        )
-                        review = (
-                            f"{review}\n\n"
-                            "---\n"
-                            f"\U0001f4c4 [Download Word Report]({download_url})"
-                        )
-                        print(
-                            f"[REPORT] Download link appended to review comment: "
-                            f"{download_url}"
-                        )
-                    else:
-                        print(
-                            "[REPORT] Neither GITHUB_RUN_ID nor BASE_URL is set "
-                            "— download link will not be included in the PR comment."
-                        )
-
-            except Exception as report_err:
-                print(
-                    f"[REPORT] Warning: Could not generate Word report: "
-                    f"{report_err}. Continuing without report."
-                )
-            # ---- End Word Report Generation ------------------------------
+            combined_comment = _build_combined_comment(
+                validation_section=validation_section,
+                review_text=review,
+            )
 
             print(
-                "\nPosting Comment To GitHub..."
+                "\nPosting Combined Comment To GitHub..."
             )
 
             try:
@@ -804,7 +692,7 @@ def process_pr_event(
                 post_pr_comment(
                     repo_name,
                     pr_number,
-                    review
+                    combined_comment
                 )
 
                 print(
@@ -831,12 +719,14 @@ def process_pr_event(
                         f"Workspace Cleanup Warning: {cleanup_err}"
                     )
 
+            # Validation warnings do NOT count as failures — reviewers always notified.
             if action in REVIEWER_MANAGEMENT_ACTIONS:
                 handle_reviewers_for_validation_result(
                     repo_name,
                     pr_number,
                     validation_passed=True
                 )
+
 
         else:
 

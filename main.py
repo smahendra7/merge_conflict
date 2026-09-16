@@ -122,39 +122,40 @@ def _build_validation_section(
 
     Returns the full markdown section string.
     """
-    lines = ["## PR Validation"]
-
     has_warnings = bool(desc_warning) or bool(comment_warnings)
 
     if not has_warnings:
-        lines.append("\n\u2705 No validation issues found.")
-        return "\n".join(lines)
+        return "## PR Validation\n\n\u2705 No validation issues found."
+
+    blocks = []
 
     # ── PR Description Validation ──────────────────────────────────────────
     if desc_warning:
-        lines.append("\n### \u26a0\ufe0f PR Description needs improvement")
+        desc_lines = ["### \u26a0\ufe0f PR Description needs improvement\n"]
         if desc_reason:
-            lines.append(f"\n{desc_reason}")
+            desc_lines.append(f"Reason:\n{desc_reason}\n")
         if desc_suggestion:
-            lines.append("\n\U0001f4a1 **Suggested PR Description:**")
-            lines.append(f"\n> {desc_suggestion}")
+            desc_lines.append(f"\U0001f4a1 **Suggested PR Description:**\n\n> {desc_suggestion}")
+        blocks.append("\n".join(desc_lines).strip())
 
     # ── Code Comment Accuracy ──────────────────────────────────────────────
     if comment_warnings:
         for item in comment_warnings:
-            lines.append("\n### \u26a0\ufe0f Code Comment needs improvement")
-            lines.append(
-                f"\n**File:** `{item['file']}`  \n"
-                f"**Line:** {item['line']}  \n"
-                f"**Comment:** \"{item['comment']}\"  \n"
-                f"**Reason:** {item['reason']}"
-            )
+            comment_lines = [
+                "### \u26a0\ufe0f Code Comment needs improvement\n",
+                f"File: `{item['file']}`\nLine: {item['line']}\n",
+                f"Comment:\n> {item['comment']}\n",
+                f"Reason:\n{item['reason']}",
+            ]
             suggestion = item.get("suggestion", "")
             if suggestion:
-                lines.append("\n\U0001f4a1 **Suggested Corrected Comment:**")
-                lines.append(f"\n> {suggestion}")
+                comment_lines.append(
+                    f"\n\U0001f4a1 **Suggested Corrected Comment:**\n\n> {suggestion}"
+                )
+            blocks.append("\n".join(comment_lines).strip())
 
-    return "\n".join(lines)
+    joined_blocks = "\n\n---\n\n".join(blocks)
+    return f"## PR Validation\n\n{joined_blocks}"
 
 
 def _build_combined_comment(
@@ -166,8 +167,6 @@ def _build_combined_comment(
     into one final PR comment body.
     """
     parts = [
-        "\U0001f916 **AI PR Review**",
-        "",
         validation_section,
         "",
         "---",

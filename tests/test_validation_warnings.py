@@ -135,6 +135,12 @@ class TestBuildValidationSectionCommentWarnings:
         assert "Code Comment needs improvement" in section
         assert "Better description." in section
         assert "Returns the user ID 1" in section
+        assert "---" in section
+
+    def test_multiple_comment_warnings_have_separators(self):
+        mismatches = [self._mismatch(i) for i in range(1, 3)]
+        section = _build_validation_section(None, None, None, mismatches)
+        assert "---" in section
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,9 +158,10 @@ class TestBuildCombinedComment:
         assert "## AI Code Review" in combined
         assert "AI review output" in combined
 
-    def test_robot_emoji_header(self):
+    def test_starts_directly_with_pr_validation_and_no_robot_emoji(self):
         combined = _build_combined_comment("## PR Validation\n\u2705 OK", "review")
-        assert "\U0001f916" in combined
+        assert combined.startswith("## PR Validation")
+        assert "\U0001f916" not in combined
 
     def test_separator_present(self):
         combined = _build_combined_comment("## PR Validation\n\u2705 OK", "review")

@@ -201,11 +201,22 @@ def _format_review(review_text: str) -> str:
         parts[i] = reason_inline.sub(r"\1**Reason:** \2", parts[i])
     text = "".join(parts)
 
-    # ── Step 2: insert --- between **Issue:** blocks ──────────────────────────
+    # ── Step 2: insert --- between **Issue:** blocks (deduplicating existing) ──
     issue_pattern = re.compile(r"(?m)(?=^\*\*Issue:\*\*)")
-    blocks = [b.strip() for b in issue_pattern.split(text) if b.strip()]
-    if len(blocks) > 1:
-        text = "\n\n---\n\n".join(blocks)
+    raw_blocks = [b.strip() for b in issue_pattern.split(text) if b.strip()]
+    cleaned_blocks = []
+    for b in raw_blocks:
+        b_clean = re.sub(r"^\s*---\s*", "", b)
+        b_clean = re.sub(r"\s*---\s*$", "", b_clean).strip()
+        if b_clean:
+            cleaned_blocks.append(b_clean)
+    if len(cleaned_blocks) > 1:
+        text = "\n\n---\n\n".join(cleaned_blocks)
+    elif cleaned_blocks:
+        text = cleaned_blocks[0]
+
+    # Collapse any duplicate consecutive separators
+    text = re.sub(r"(?m)^---\s*\n+(?:---\s*\n*)+", "---\n\n", text)
 
     return text.strip()
 

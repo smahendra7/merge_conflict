@@ -233,6 +233,31 @@ class TestBuildCombinedComment:
         assert "\n\n---\n\n" in review_part
         assert review_part.count("---") == 1
 
+    def test_no_duplicate_consecutive_separators_in_ai_code_review(self):
+        """When LLM review output already contains --- between issues, no duplicate --- should appear."""
+        raw_review = (
+            "Issue:\nFirst issue\n\n"
+            "File: comment_test.py\n"
+            "Line: L2-L3\n\n"
+            "Code:\n```python\nx = 1\n```\n\n"
+            "Reason:\nFirst reason\n\n"
+            "Suggestion:\nFirst suggestion\n\n"
+            "---\n\n"
+            "Issue:\nSecond issue\n\n"
+            "File: comment_test.py\n"
+            "Line: L7-L8\n\n"
+            "Code:\n```python\ny = 2\n```\n\n"
+            "Reason:\nSecond reason\n\n"
+            "Suggestion:\nSecond suggestion"
+        )
+        combined = _build_combined_comment("## PR Validation\n\u2705 OK", raw_review)
+        assert "**Reason:** First reason" in combined
+        assert "**Reason:** Second reason" in combined
+        review_part = combined.split("## AI Code Review\n\n")[1]
+        assert review_part.count("---") == 1
+        assert "---\n\n---" not in combined
+        assert "---\n---" not in combined
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

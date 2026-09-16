@@ -186,11 +186,11 @@ class TestBuildCombinedComment:
             "Suggested desc",
             [mismatch],
         )
-        assert "**Reason:**\nPR description is empty" in section
+        assert "**Reason:** PR description is empty" in section
         assert "**File:** `comment_test.py`" in section
         assert "**Line:** 2" in section
         assert "**Comment:**\n> adds discount" in section
-        assert "**Reason:**\ncontradicts code" in section
+        assert "**Reason:** contradicts code" in section
 
     def test_bold_labels_in_ai_code_review(self):
         raw_review = (

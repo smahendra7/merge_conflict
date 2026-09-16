@@ -134,7 +134,7 @@ def _build_validation_section(
     if desc_warning:
         desc_lines = ["### \u26a0\ufe0f PR Description needs improvement\n"]
         if desc_reason:
-            desc_lines.append(f"**Reason:**\n{desc_reason}\n")
+            desc_lines.append(f"**Reason:** {desc_reason}\n")
         if desc_suggestion:
             desc_lines.append(f"\U0001f4a1 **Suggested PR Description:**\n\n> {desc_suggestion}")
         blocks.append("\n".join(desc_lines).strip())
@@ -146,7 +146,7 @@ def _build_validation_section(
                 "### \u26a0\ufe0f Code Comment needs improvement\n",
                 f"**File:** `{item['file']}`\n**Line:** {item['line']}\n",
                 f"**Comment:**\n> {item['comment']}\n",
-                f"**Reason:**\n{item['reason']}",
+                f"**Reason:** {item['reason']}",
             ]
             suggestion = item.get("suggestion", "")
             if suggestion:

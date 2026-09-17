@@ -24,7 +24,7 @@ jobs:
           python-version: "3.11"
 
       - name: Run AI PR Automation
-        uses: smahendra7/boAt_GithubAction/.github/actions/ai-pr-automation@main
+        uses: smahendra7/merge_conflict/.github/actions/ai-pr-automation@main
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
